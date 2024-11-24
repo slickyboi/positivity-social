@@ -43,9 +43,8 @@ app.config.from_object('config.Config')
 Talisman(app, force_https=True)
 csrf = SeaSurf(app)
 limiter = Limiter(
-    app,
     key_func=get_remote_address,
-    storage_uri=os.getenv('RATELIMIT_STORAGE_URL')
+    app=app
 )
 
 # CORS configuration
