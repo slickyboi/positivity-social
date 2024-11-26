@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState } from 'react';
-import axios from 'axios';
+import axios from '../config/api';
 
 const AuthContext = createContext(null);
 
@@ -7,23 +7,22 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
-  const login = async (username, password) => {
+  const login = async (email, password) => {
     try {
-      const response = await axios.post('/api/login', { username, password });
-      const token = response.data.token;
-      localStorage.setItem('token', token);
-      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-      setUser({ username });
+      const response = await axios.post('/api/login', { email, password });
+      setUser(response.data.user);
       setIsAuthenticated(true);
     } catch (error) {
-      throw new Error('Invalid credentials');
+      throw new Error(error.response?.data?.error || 'Invalid credentials');
     }
   };
 
   const register = async (username, email, password) => {
     try {
-      await axios.post('/api/register', { username, email, password });
-      await login(username, password);
+      const response = await axios.post('/api/register', { username, email, password });
+      if (response.data.message === 'User created successfully') {
+        await login(email, password);
+      }
     } catch (error) {
       throw new Error(error.response?.data?.error || 'Registration failed');
     }

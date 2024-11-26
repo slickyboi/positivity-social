@@ -24,6 +24,7 @@ from sentry_sdk.integrations.flask import FlaskIntegration
 from celery import Celery
 import logging
 from logging.handlers import RotatingFileHandler
+from werkzeug.utils import secure_filename
 
 # Load environment variables
 load_dotenv()
@@ -64,13 +65,34 @@ migrate = Migrate(app, db)
 # Redis configuration
 redis_client = redis.from_url(os.getenv('REDIS_URL'))
 
-# AWS S3 configuration
+# S3 Configuration
 s3_client = boto3.client(
     's3',
     aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
     aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
     region_name=os.getenv('AWS_REGION')
 )
+
+def upload_file_to_s3(file, acl="public-read"):
+    try:
+        filename = secure_filename(file.filename)
+        unique_filename = f"{uuid.uuid4()}-{filename}"
+        
+        s3_client.upload_fileobj(
+            file,
+            os.getenv('S3_BUCKET'),
+            unique_filename,
+            ExtraArgs={
+                "ACL": acl,
+                "ContentType": file.content_type
+            }
+        )
+
+        # Generate the URL of the uploaded file
+        return f"https://{os.getenv('S3_BUCKET')}.s3.{os.getenv('AWS_REGION')}.amazonaws.com/{unique_filename}"
+    except Exception as e:
+        print(f"Error uploading file to S3: {str(e)}")
+        return None
 
 # Celery configuration
 celery = Celery(
@@ -262,7 +284,7 @@ def get_posts(current_user):
     return jsonify([{
         'id': post.id,
         'content': post.content,
-        'image_url': f'/uploads/{post.image_path}' if post.image_path else None,
+        'image_url': post.image_path,
         'author': post.author.username,
         'timestamp': post.timestamp,
         'likes': len(post.likes)
@@ -272,37 +294,39 @@ def get_posts(current_user):
 @token_required
 def create_post(current_user):
     try:
-        content = request.form.get('content', '')
-        
-        # Check if content is positive
-        if not check_sentiment(content):
-            return jsonify({'error': 'Only positive content is allowed'}), 400
-        
-        image_path = None
+        content = request.form.get('content')
+        if not content:
+            return jsonify({'error': 'Content is required'}), 400
+
+        image_url = None
         if 'image' in request.files:
             file = request.files['image']
             if file and allowed_file(file.filename):
-                # Verify file is actually an image
-                file_content = file.read()
-                file.seek(0)
-                mime = magic.from_buffer(file_content, mime=True)
-                if not mime.startswith('image/'):
-                    return jsonify({'error': 'Invalid image file'}), 400
-                
-                image_path = process_image(file)
-        
+                image_url = upload_file_to_s3(file)
+                if not image_url:
+                    return jsonify({'error': 'Failed to upload image'}), 500
+
         post = Post(
             content=content,
-            image_path=image_path,
+            image_path=image_url,
             user_id=current_user.id
         )
         db.session.add(post)
         db.session.commit()
-        
-        return jsonify({'message': 'Post created successfully'}), 201
-        
+
+        return jsonify({
+            'message': 'Post created successfully',
+            'post': {
+                'id': post.id,
+                'content': post.content,
+                'image_url': post.image_path,
+                'timestamp': post.timestamp.isoformat()
+            }
+        }), 201
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        db.session.rollback()
+        print(f"Error creating post: {str(e)}")
+        return jsonify({'error': 'Failed to create post'}), 500
 
 @app.route('/api/posts/<int:post_id>/like', methods=['POST'])
 @token_required
