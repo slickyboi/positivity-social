@@ -3,12 +3,14 @@ services:
     name: positivity-social-backend
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    startCommand: gunicorn app_simple:app
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.0
       - key: FLASK_ENV
         value: production
+      - key: SECRET_KEY
+        value: your-super-secret-key-2024
 
   - type: web
     name: positivity-social-frontend
